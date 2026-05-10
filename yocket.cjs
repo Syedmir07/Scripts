@@ -8,17 +8,29 @@ const PROFILE_BASE_URL = 'https://api.yocket.com/users/profile/';
 const DATA_FILE = 'full_detailed_profiles.jsonl';
 const CHECKPOINT_FILE = 'scraper_checkpoint.json';
 const FAILED_USERS_FILE = 'failed_usernames.txt';
-const DELAY_BETWEEN_PROFILES = 500; // 1 second per profile to avoid bans
+const DELAY_BETWEEN_PROFILES = 500; // 0.5 second per profile to avoid bans
+const START_TIME = Date.now();
+const MAX_RUNTIME = 5.5 * 60 * 60 * 1000; // 5.5 hours in milliseconds
 
-let CURRENT_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGdvcml0aG0iOiJFUzI1NiIsImlkIjoiOGYzZjI2MDItZGY2Yi00ZWM1LWFjOTUtMmI1NGEyNjBmNDMzIiwiaWF0IjoxNzc3MzQ3MDY2LCJleHAiOjE3ODUxNzY4MTJ9.HE_IFwwsjmfMLns27arU2XmkXr0XjFalc9sJBHhm0hw';
+let CURRENT_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGdvcml0aG0iOiJFUzI1NiIsImlkIjoiOGYzZjI2MDItZGY2Yi00ZWM1LWFjOTUtMmI1NGEyNjBmNDMzIiwiaWF0IjoxNzc4NDA5NDg3LCJleHAiOjE3ODYyMzkyMzN9.8sULqqdz6EsZNBxF-ZiG0vfT61R2ON5ZxONKMkZOrv8";
+const IS_INTERACTIVE = process.stdin.isTTY && process.stdout.isTTY;
+const IS_CI = Boolean(process.env.CI || process.env.GITHUB_ACTIONS);
 
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 function promptNewToken() {
+    if (!IS_INTERACTIVE) {
+        throw new Error('Token expired in a non-interactive environment. Set YOCKET_TOKEN in the environment and rerun.');
+    }
+
     return new Promise((resolve) => {
         console.log("\n⚠️  TOKEN EXPIRED (401 Unauthorized)!");
         rl.question("Paste new Bearer Token: ", (newToken) => resolve(newToken.trim()));
     });
+}
+
+function isTimeUp() {
+    return Date.now() - START_TIME > MAX_RUNTIME;
 }
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -32,6 +44,11 @@ async function scrape() {
     }
 
     for (let p = state.page; p <= 39000; p++) {
+        if (isTimeUp()) {
+            console.log("⏳ Reached 5.5 hour limit. Saving progress and exiting to stay within GitHub limits...");
+            return;
+        }
+
         let usernames = [];
         
         // 1. Fetch the list of users on this page
@@ -44,8 +61,8 @@ async function scrape() {
             usernames = listRes.data.data.results.map(r => r.username);
         } catch (err) {
             if (err.response?.status === 401) {
-                if (process.env.CI || process.env.GITHUB_ACTIONS) {
-                    console.error("Token expired during list fetch in CI. Exiting to commit current data.");
+                if (IS_CI || !IS_INTERACTIVE) {
+                    console.error("Token expired during list fetch in non-interactive environment. Exiting to commit current data.");
                     process.exit(1);
                 } else {
                     CURRENT_TOKEN = await promptNewToken();
@@ -60,6 +77,11 @@ async function scrape() {
 
         // 2. Fetch details for each username
         for (let i = state.userIndex; i < usernames.length; i++) {
+            if (isTimeUp()) {
+                console.log("⏳ Reached 5.5 hour limit during profile fetch. Stopping...");
+                return;
+            }
+
             const username = usernames[i];
             let success = false;
             let retryCount = 0;
@@ -84,8 +106,8 @@ async function scrape() {
 
                 } catch (err) {
                     if (err.response?.status === 401) {
-                        if (process.env.CI || process.env.GITHUB_ACTIONS) {
-                            console.error("Token expired during profile fetch in CI. Exiting to commit current data.");
+                        if (IS_CI || !IS_INTERACTIVE) {
+                            console.error("Token expired during profile fetch in non-interactive environment. Exiting to commit current data.");
                             process.exit(1);
                         } else {
                             CURRENT_TOKEN = await promptNewToken();
@@ -114,4 +136,10 @@ async function scrape() {
     }
 }
 
-scrape().catch(console.error);
+scrape().then(() => {
+    console.log("✅ Script finished or paused for time. Process exiting.");
+    process.exit(0);
+}).catch((err) => {
+    console.error(err);
+    process.exit(1);
+});

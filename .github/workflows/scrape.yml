@@ -28,12 +28,13 @@ jobs:
 
       - name: Run yocket
         run: node yocket.cjs
-        continue-on-error: true
 
       - name: Commit and Push changes
+        if: always()
         run: |
           git config --global user.name "Scraper Bot"
           git config --global user.email "bot@github.com"
+          PAGE=$(node -e "const fs=require('fs'); const path='./scraper_checkpoint.json'; console.log(fs.existsSync(path) ? JSON.parse(fs.readFileSync(path,'utf8')).page : 'unknown');")
           git add .
-          git commit -m "Automated data update [skip ci]" || echo "No changes to commit"
+          git commit -m "Automated data update: Page ${PAGE} [skip ci]" || echo "No changes to commit"
           git push
