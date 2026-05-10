@@ -43,9 +43,14 @@ async function scrape() {
             usernames = listRes.data.data.results.map(r => r.username);
         } catch (err) {
             if (err.response?.status === 401) {
-                CURRENT_TOKEN = await promptNewToken();
-                p--; // Repeat this page
-                continue;
+                if (process.env.CI || process.env.GITHUB_ACTIONS) {
+                    console.error("Token expired during list fetch in CI. Exiting to commit current data.");
+                    process.exit(1);
+                } else {
+                    CURRENT_TOKEN = await promptNewToken();
+                    p--; // Repeat this page
+                    continue;
+                }
             }
             console.error("List Fetch Error:", err.message);
             await sleep(5000);
@@ -76,7 +81,12 @@ async function scrape() {
 
                 } catch (err) {
                     if (err.response?.status === 401) {
-                        CURRENT_TOKEN = await promptNewToken();
+                        if (process.env.CI || process.env.GITHUB_ACTIONS) {
+                            console.error("Token expired during profile fetch in CI. Exiting to commit current data.");
+                            process.exit(1);
+                        } else {
+                            CURRENT_TOKEN = await promptNewToken();
+                        }
                     } else if (err.response?.status === 404) {
                         console.log(`User ${username} not found (404). Skipping.`);
                         success = true; 

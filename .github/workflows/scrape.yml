@@ -28,6 +28,7 @@ jobs:
 
       - name: Run yocket
         run: node yocket.cjs
+        continue-on-error: true
 
       - name: Commit and Push changes
         run: |
