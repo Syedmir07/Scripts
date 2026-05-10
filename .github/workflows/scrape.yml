@@ -2,21 +2,27 @@ name: Yocket Periodic Scraper
 
 on:
   push:
-    branches:
-      - main
-  schedule:
-    - cron: '0 */6 * * *' # Runs every 6 hours
-  workflow_dispatch: # Allows you to start it manually
+    branches: [main]
+  workflow_dispatch:
+  repository_dispatch:
+    types: [restart_scraper]
+
+# This ensures that if a manual run starts, it doesn't collide with the automated loop
+concurrency:
+  group: yocket-scraper
+  cancel-in-progress: false 
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Allows the bot to push data back to your repo
+      contents: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
@@ -27,14 +33,21 @@ jobs:
         run: npm install axios
 
       - name: Run yocket
+        env:
+          YOCKET_TOKEN: ${{ secrets.YOCKET_TOKEN }} # Passes your secret to the script
         run: node yocket.cjs
 
       - name: Commit and Push changes
-        if: always()
         run: |
           git config --global user.name "Scraper Bot"
           git config --global user.email "bot@github.com"
-          PAGE=$(node -e "const fs=require('fs'); const path='./scraper_checkpoint.json'; console.log(fs.existsSync(path) ? JSON.parse(fs.readFileSync(path,'utf8')).page : 'unknown');")
           git add .
-          git commit -m "Automated data update: Page ${PAGE} [skip ci]" || echo "No changes to commit"
-          git push
+          git commit -m "Automated data update [skip ci]" || echo "No changes to commit"
+          git push origin main
+
+      - name: Trigger next run
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }} # Uses your PAT to restart the loop
+        run: |
+          gh workflow run "Yocket Periodic Scraper"
