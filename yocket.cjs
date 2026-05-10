@@ -7,6 +7,7 @@ const FILTER_URL = 'https://api.yocket.com/connect/filter/v2/8f3f2602-df6b-4ec5-
 const PROFILE_BASE_URL = 'https://api.yocket.com/users/profile/';
 const DATA_FILE = 'full_detailed_profiles.jsonl';
 const CHECKPOINT_FILE = 'scraper_checkpoint.json';
+const FAILED_USERS_FILE = 'failed_usernames.txt';
 const DELAY_BETWEEN_PROFILES = 500; // 1 second per profile to avoid bans
 
 let CURRENT_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhbGdvcml0aG0iOiJFUzI1NiIsImlkIjoiOGYzZjI2MDItZGY2Yi00ZWM1LWFjOTUtMmI1NGEyNjBmNDMzIiwiaWF0IjoxNzc3MzQ3MDY2LCJleHAiOjE3ODUxNzY4MTJ9.HE_IFwwsjmfMLns27arU2XmkXr0XjFalc9sJBHhm0hw';
@@ -61,6 +62,8 @@ async function scrape() {
         for (let i = state.userIndex; i < usernames.length; i++) {
             const username = usernames[i];
             let success = false;
+            let retryCount = 0;
+            const maxRetries = 3; // Maximum retries for non-401 errors
 
             while (!success) {
                 try {
@@ -91,8 +94,15 @@ async function scrape() {
                         console.log(`User ${username} not found (404). Skipping.`);
                         success = true; 
                     } else {
-                        console.log(`Error fetching ${username}: ${err.message}. Retrying in 10s...`);
-                        await sleep(10000);
+                        retryCount++;
+                        if (retryCount >= maxRetries) {
+                            console.log(`Max retries reached for ${username}. Skipping and logging to failed file.`);
+                            fs.appendFileSync(FAILED_USERS_FILE, username + '\n');
+                            success = true;
+                        } else {
+                            console.log(`Error fetching ${username}: ${err.message}. Retrying in 10s...`);
+                            await sleep(10000);
+                        }
                     }
                 }
             }
