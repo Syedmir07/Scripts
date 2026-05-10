@@ -1,0 +1,38 @@
+name: Yocket Periodic Scraper
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 */6 * * *' # Runs every 6 hours
+  workflow_dispatch: # Allows you to start it manually
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Allows the bot to push data back to your repo
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install axios
+
+      - name: Run yocket
+        run: node yocket.cjs
+
+      - name: Commit and Push changes
+        run: |
+          git config --global user.name "Scraper Bot"
+          git config --global user.email "bot@github.com"
+          git add .
+          git commit -m "Automated data update [skip ci]" || echo "No changes to commit"
+          git push
