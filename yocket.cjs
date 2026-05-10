@@ -5,7 +5,7 @@ const readline = require('readline');
 // --- CONFIGURATION ---
 const FILTER_URL = 'https://api.yocket.com/connect/filter/v2/8f3f2602-df6b-4ec5-ac95-2b54a260f433';
 const PROFILE_BASE_URL = 'https://api.yocket.com/users/profile/';
-const DATA_FILE = 'full_detailed_profiles.jsonl';
+const DATA_FILE_PREFIX = 'data_batch_';
 const CHECKPOINT_FILE = 'scraper_checkpoint.json';
 const FAILED_USERS_FILE = 'failed_usernames.txt';
 const DELAY_BETWEEN_PROFILES = 500; // 0.5 second per profile to avoid bans
@@ -94,8 +94,9 @@ async function scrape() {
                         headers: { 'authorization': `Bearer ${CURRENT_TOKEN}` }
                     });
 
-                    // Append full data to JSONL
-                    fs.appendFileSync(DATA_FILE, JSON.stringify(profileRes.data.data) + '\n');
+                    // Append full data to JSONL (batched by 200 pages)
+                    const batch = Math.floor((p - 1) / 200) + 1;
+                    fs.appendFileSync(`${DATA_FILE_PREFIX}${batch}.jsonl`, JSON.stringify(profileRes.data.data) + '\n');
                     
                     // Update checkpoint
                     state.userIndex = i + 1;
