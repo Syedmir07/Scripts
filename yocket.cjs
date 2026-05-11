@@ -15,7 +15,7 @@ const MAX_PAGES = 39000;
 
 const PAGES_PER_FILE = 4000;
 
-const DELAY_BETWEEN_PROFILES = 50;
+const CONCURRENT_USERS = 9;
 
 const MAX_RUNTIME = 5.5 * 60 * 60 * 1000;
 
@@ -216,7 +216,8 @@ async function scrape() {
 
         const startIndex = (p === START_PAGE) ? START_USER_INDEX : 0;
 
-        for (let i = startIndex; i < usernames.length; i++) {
+        // Process users in parallel batches
+        for (let batchStart = startIndex; batchStart < usernames.length; batchStart += CONCURRENT_USERS) {
             if (isTimeUp()) {
                 console.log(
                     '\n⏳ Max runtime reached during profiles.'
@@ -224,106 +225,87 @@ async function scrape() {
                 return;
             }
 
-            const username = usernames[i];
+            const batchEnd = Math.min(batchStart + CONCURRENT_USERS, usernames.length);
+            const batchUsernames = usernames.slice(batchStart, batchEnd);
 
-            let success = false;
-            let retryCount = 0;
+            console.log(
+                `[Page ${p}] Processing users ${batchStart + 1}-${batchEnd}/${usernames.length}`
+            );
 
-            const MAX_RETRIES = 3;
+            // Process batch concurrently
+            const batchPromises = batchUsernames.map(async (username, batchIndex) => {
+                const globalIndex = batchStart + batchIndex;
+                let success = false;
+                let retryCount = 0;
+                const MAX_RETRIES = 3;
 
-            while (!success) {
-                try {
-                    console.log(
-                        `[Page ${p}] [${i + 1}/${
-                            usernames.length
-                        }] ${username}`
-                    );
-
-                    const profileRes = await axios.get(
-                        `${PROFILE_BASE_URL}${username}`,
-                        {
-                            headers: {
-                                authorization: `Bearer ${CURRENT_TOKEN}`
+                while (!success && !isTimeUp()) {
+                    try {
+                        const profileRes = await axios.get(
+                            `${PROFILE_BASE_URL}${username}`,
+                            {
+                                headers: {
+                                    authorization: `Bearer ${CURRENT_TOKEN}`
+                                }
                             }
-                        }
-                    );
+                        );
 
-                    const enriched = {
-                        _page: p,
-                        _username: username,
-                        _scraped_at:
-                            new Date().toISOString(),
-                        ...profileRes.data.data
-                    };
+                        const enriched = {
+                            _page: p,
+                            _username: username,
+                            _scraped_at: new Date().toISOString(),
+                            ...profileRes.data.data
+                        };
 
-                    fs.appendFileSync(
-                        batchFile,
-                        JSON.stringify(enriched) + '\n'
-                    );
-
-                    success = true;
-
-                    await sleep(
-                        DELAY_BETWEEN_PROFILES
-                    );
-                } catch (err) {
-                    // ===== TOKEN EXPIRED =====
-
-                    if (err.response?.status === 401) {
-                        if (
-                            IS_CI ||
-                            !IS_INTERACTIVE
-                        ) {
-                            console.error(
-                                '401 in CI/non-interactive mode.'
-                            );
-
-                            process.exit(1);
-                        }
-
-                        CURRENT_TOKEN =
-                            await promptNewToken();
-
-                        continue;
-                    }
-
-                    // ===== USER NOT FOUND =====
-
-                    if (err.response?.status === 404) {
-                        console.log(
-                            `${username} not found (404)`
+                        fs.appendFileSync(
+                            batchFile,
+                            JSON.stringify(enriched) + '\n'
                         );
 
                         success = true;
-                        continue;
-                    }
+                        console.log(`  ✓ ${username}`);
+                    } catch (err) {
+                        // ===== TOKEN EXPIRED =====
+                        if (err.response?.status === 401) {
+                            if (IS_CI || !IS_INTERACTIVE) {
+                                console.error('401 in CI/non-interactive mode.');
+                                process.exit(1);
+                            }
+                            CURRENT_TOKEN = await promptNewToken();
+                            continue;
+                        }
 
-                    // ===== RETRY LOGIC =====
+                        // ===== USER NOT FOUND =====
+                        if (err.response?.status === 404) {
+                            console.log(`  ✗ ${username} not found (404)`);
+                            success = true;
+                            continue;
+                        }
 
-                    retryCount++;
+                        // ===== RETRY LOGIC =====
+                        retryCount++;
+                        console.log(`  ⚠ ${username}: ${err.message} (retry ${retryCount}/${MAX_RETRIES})`);
 
-                    console.log(
-                        `Error fetching ${username}: ${err.message}`
-                    );
-
-                    if (
-                        retryCount >= MAX_RETRIES
-                    ) {
-                        console.log(
-                            `Max retries reached for ${username}`
-                        );
-
-                        logFailedUser(username);
-
-                        success = true;
-                    } else {
-                        console.log(
-                            `Retrying in 10s... (${retryCount}/${MAX_RETRIES})`
-                        );
-
-                        await sleep(10000);
+                        if (retryCount >= MAX_RETRIES) {
+                            console.log(`  ✗ ${username} max retries reached`);
+                            logFailedUser(username);
+                            success = true;
+                        } else {
+                            await sleep(2000); // Shorter retry delay
+                        }
                     }
                 }
+            });
+
+            // Wait for all users in this batch to complete
+            await Promise.all(batchPromises);
+
+            // Save checkpoint after each batch
+            saveCheckpoint(p, batchEnd);
+
+            // Small delay between batches to be respectful
+            if (batchEnd < usernames.length) {
+                await sleep(100);
             }
         }
 
